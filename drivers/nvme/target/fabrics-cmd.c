@@ -103,15 +103,21 @@ static u16 nvmet_install_queue(struct nvmet_ctrl *ctrl, struct nvmet_req *req)
 	struct nvmet_ctrl *old;
 	u16 ret;
 
-	old = cmpxchg(&req->sq->ctrl, NULL, ctrl);
-	if (old) {
-		pr_warn("queue already connected!\n");
-		return NVME_SC_CONNECT_CTRL_BUSY | NVME_SC_DNR;
-	}
 	if (!sqsize) {
 		pr_warn("queue size zero!\n");
 		ret = NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
 		goto err;
+	}
+
+	if (ctrl->sqs[qid] != NULL) {
+		pr_warn("qid %u has already been created\n", qid);
+		return NVME_SC_CMD_SEQ_ERROR | NVME_SC_DNR;
+	}
+
+	old = cmpxchg(&req->sq->ctrl, NULL, ctrl);
+	if (old) {
+		pr_warn("queue already connected!\n");
+		return NVME_SC_CONNECT_CTRL_BUSY | NVME_SC_DNR;
 	}
 
 	/* note: convert queue size from 0's-based value to 1's-based value */
