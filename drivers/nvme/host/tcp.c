@@ -190,6 +190,8 @@ struct nvme_tcp_ctrl {
 	struct delayed_work	connect_work;
 	struct nvme_tcp_request async_req;
 	struct net		*net;
+	/* size of the queues array, queue_count may shrink on reconnect */
+	u32			nr_alloc_queues;
 };
 
 static LIST_HEAD(nvme_tcp_ctrl_list);
@@ -2482,7 +2484,7 @@ static void nvme_tcp_free_ctrl(struct nvme_ctrl *nctrl)
 
 	nvmf_free_options(nctrl->opts);
 free_ctrl:
-	for (i = 0; i < nctrl->queue_count; i++) {
+	for (i = 0; i < ctrl->nr_alloc_queues; i++) {
 		struct nvme_tcp_queue *queue = &ctrl->queues[i];
 
 		if (queue->pf_cache.va) {
@@ -2854,7 +2856,8 @@ static struct nvme_tcp_ctrl *nvme_tcp_alloc_ctrl(struct device *dev,
 		goto out_free_ctrl;
 	}
 
-	ctrl->queues = kcalloc(ctrl->ctrl.queue_count, sizeof(*ctrl->queues),
+	ctrl->nr_alloc_queues = ctrl->ctrl.queue_count;
+	ctrl->queues = kcalloc(ctrl->nr_alloc_queues, sizeof(*ctrl->queues),
 				GFP_KERNEL);
 	if (!ctrl->queues) {
 		ret = -ENOMEM;
