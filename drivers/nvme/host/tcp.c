@@ -2708,7 +2708,12 @@ static blk_status_t nvme_tcp_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	blk_mq_start_request(rq);
 
-	nvme_tcp_queue_request(req, true, bd->last);
+	/*
+	 * 4.19 has no ->commit_rqs, so nothing would kick io_work if a
+	 * later request in this batch fails to dispatch. Always treat
+	 * the request as the last one.
+	 */
+	nvme_tcp_queue_request(req, true, true);
 
 	return BLK_STS_OK;
 }
