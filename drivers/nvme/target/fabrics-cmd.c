@@ -101,17 +101,24 @@ static u16 nvmet_install_queue(struct nvmet_ctrl *ctrl, struct nvmet_req *req)
 	u16 qid = le16_to_cpu(c->qid);
 	u16 sqsize = le16_to_cpu(c->sqsize);
 	struct nvmet_ctrl *old;
+	u16 mqes = NVME_CAP_MQES(ctrl->cap);
 	u16 ret;
+
+	if (!sqsize) {
+		pr_warn("queue size zero!\n");
+		return NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
+	}
+
+	if (sqsize > mqes) {
+		pr_warn("sqsize %u is larger than MQES supported %u cntlid %d\n",
+				sqsize, mqes, ctrl->cntlid);
+		return NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
+	}
 
 	old = cmpxchg(&req->sq->ctrl, NULL, ctrl);
 	if (old) {
 		pr_warn("queue already connected!\n");
 		return NVME_SC_CONNECT_CTRL_BUSY | NVME_SC_DNR;
-	}
-	if (!sqsize) {
-		pr_warn("queue size zero!\n");
-		req->sq->ctrl = NULL;
-		return NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
 	}
 
 	/* note: convert queue size from 0's-based value to 1's-based value */
