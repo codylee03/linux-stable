@@ -579,6 +579,7 @@ void nvmet_sq_destroy(struct nvmet_sq *sq)
 	percpu_ref_exit(&sq->ref);
 
 	if (sq->ctrl) {
+		sq->ctrl->sqs[sq->qid] = NULL;
 		nvmet_ctrl_put(sq->ctrl);
 		sq->ctrl = NULL; /* allows reusing the queue later */
 	}
