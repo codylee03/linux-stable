@@ -2564,7 +2564,12 @@ static void nvme_tcp_complete_timed_out(struct request *rq)
 	struct nvme_ctrl *ctrl = &req->queue->ctrl->ctrl;
 
 	nvme_tcp_stop_queue(ctrl, nvme_tcp_queue_id(req->queue));
-	if (blk_mq_request_started(rq)) {
+	/*
+	 * 4.19 has no blk_mq_request_completed(); only abort the request
+	 * if it is still in flight, so that a completion that already
+	 * marked it MQ_RQ_COMPLETE keeps its status.
+	 */
+	if (READ_ONCE(rq->state) == MQ_RQ_IN_FLIGHT) {
 		nvme_req(rq)->status = NVME_SC_HOST_ABORTED_CMD;
 		blk_mq_complete_request(rq);
 	}
