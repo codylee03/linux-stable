@@ -259,6 +259,7 @@ struct nvmet_fabrics_ops {
 	int (*add_port)(struct nvmet_port *port);
 	void (*remove_port)(struct nvmet_port *port);
 	void (*delete_ctrl)(struct nvmet_ctrl *ctrl);
+	u16 (*install_queue)(struct nvmet_sq *sq);
 	void (*disc_traddr)(struct nvmet_req *req,
 			struct nvmet_port *port, char *traddr);
 };

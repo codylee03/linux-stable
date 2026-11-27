@@ -115,6 +115,23 @@ static u16 nvmet_install_queue(struct nvmet_ctrl *ctrl, struct nvmet_req *req)
 	/* note: convert queue size from 0's-based value to 1's-based value */
 	nvmet_cq_setup(ctrl, req->cq, qid, sqsize + 1);
 	nvmet_sq_setup(ctrl, req->sq, qid, sqsize + 1);
+
+	if (req->ops->install_queue) {
+		u16 status = req->ops->install_queue(req->sq);
+
+		if (status) {
+			pr_err("failed to install queue %d cntlid %d ret %x\n",
+				qid, ctrl->cntlid, status);
+			/*
+			 * The caller drops its controller reference on error,
+			 * so do not leave this queue pointing at it.
+			 */
+			ctrl->sqs[qid] = NULL;
+			ctrl->cqs[qid] = NULL;
+			req->sq->ctrl = NULL;
+			return status;
+		}
+	}
 	return 0;
 }
 
