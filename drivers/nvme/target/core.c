@@ -19,6 +19,8 @@
 #include "nvmet.h"
 
 struct workqueue_struct *buffered_io_wq;
+struct workqueue_struct *nvmet_wq;
+EXPORT_SYMBOL_GPL(nvmet_wq);
 static const struct nvmet_fabrics_ops *nvmet_transports[NVMF_TRTYPE_MAX];
 static DEFINE_IDA(cntlid_ida);
 
@@ -509,15 +511,17 @@ static void __nvmet_req_complete(struct nvmet_req *req, u16 status)
 	if (status)
 		nvmet_set_status(req, status);
 
-	if (req->sq->size) {
-		do {
-			old_sqhd = req->sq->sqhd;
-			new_sqhd = (old_sqhd + 1) % req->sq->size;
-		} while (cmpxchg(&req->sq->sqhd, old_sqhd, new_sqhd) !=
-					old_sqhd);
+	if (!req->sq->sqhd_disabled) {
+		if (req->sq->size) {
+			do {
+				old_sqhd = req->sq->sqhd;
+				new_sqhd = (old_sqhd + 1) % req->sq->size;
+			} while (cmpxchg(&req->sq->sqhd, old_sqhd, new_sqhd) !=
+						old_sqhd);
+		}
+		sqhd = req->sq->sqhd & 0x0000FFFF;
+		req->rsp->sq_head = cpu_to_le16(sqhd);
 	}
-	sqhd = req->sq->sqhd & 0x0000FFFF;
-	req->rsp->sq_head = cpu_to_le16(sqhd);
 	req->rsp->sq_id = cpu_to_le16(req->sq->qid);
 	req->rsp->command_id = req->cmd->common.command_id;
 
@@ -1028,31 +1032,11 @@ u16 nvmet_alloc_ctrl(const char *subsysnqn, const char *hostnqn,
 	ctrl->cntlid = ret;
 
 	ctrl->ops = req->ops;
-	if (ctrl->subsys->type == NVME_NQN_DISC) {
-		/* Don't accept keep-alive timeout for discovery controllers */
-		if (kato) {
-			status = NVME_SC_INVALID_FIELD | NVME_SC_DNR;
-			goto out_remove_ida;
-		}
-
-		/*
-		 * Discovery controllers use some arbitrary high value in order
-		 * to cleanup stale discovery sessions
-		 *
-		 * From the latest base diff RC:
-		 * "The Keep Alive command is not supported by
-		 * Discovery controllers. A transport may specify a
-		 * fixed Discovery controller activity timeout value
-		 * (e.g., 2 minutes).  If no commands are received
-		 * by a Discovery controller within that time
-		 * period, the controller may perform the
-		 * actions for Keep Alive Timer expiration".
-		 */
+	if (ctrl->subsys->type == NVME_NQN_DISC && !kato)
 		ctrl->kato = NVMET_DISC_KATO;
-	} else {
+	else
 		/* keep-alive timeout in seconds */
 		ctrl->kato = DIV_ROUND_UP(kato, 1000);
-	}
 	nvmet_start_keep_alive_timer(ctrl);
 
 	mutex_lock(&subsys->lock);
@@ -1062,8 +1046,6 @@ u16 nvmet_alloc_ctrl(const char *subsysnqn, const char *hostnqn,
 	*ctrlp = ctrl;
 	return 0;
 
-out_remove_ida:
-	ida_simple_remove(&cntlid_ida, ctrl->cntlid);
 out_free_sqs:
 	kfree(ctrl->sqs);
 out_free_cqs:
@@ -1229,9 +1211,15 @@ static int __init nvmet_init(void)
 		goto out;
 	}
 
+	nvmet_wq = alloc_workqueue("nvmet-wq", WQ_MEM_RECLAIM, 0);
+	if (!nvmet_wq) {
+		error = -ENOMEM;
+		goto out_free_buffered_wq;
+	}
+
 	error = nvmet_init_discovery();
 	if (error)
-		goto out_free_work_queue;
+		goto out_free_nvmet_wq;
 
 	error = nvmet_init_configfs();
 	if (error)
@@ -1240,7 +1228,9 @@ static int __init nvmet_init(void)
 
 out_exit_discovery:
 	nvmet_exit_discovery();
-out_free_work_queue:
+out_free_nvmet_wq:
+	destroy_workqueue(nvmet_wq);
+out_free_buffered_wq:
 	destroy_workqueue(buffered_io_wq);
 out:
 	return error;
@@ -1251,6 +1241,7 @@ static void __exit nvmet_exit(void)
 	nvmet_exit_configfs();
 	nvmet_exit_discovery();
 	ida_destroy(&cntlid_ida);
+	destroy_workqueue(nvmet_wq);
 	destroy_workqueue(buffered_io_wq);
 
 	BUILD_BUG_ON(sizeof(struct nvmf_disc_rsp_page_entry) != 1024);

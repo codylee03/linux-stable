@@ -101,6 +101,7 @@ static u16 nvmet_install_queue(struct nvmet_ctrl *ctrl, struct nvmet_req *req)
 	u16 qid = le16_to_cpu(c->qid);
 	u16 sqsize = le16_to_cpu(c->sqsize);
 	struct nvmet_ctrl *old;
+	u16 ret;
 
 	old = cmpxchg(&req->sq->ctrl, NULL, ctrl);
 	if (old) {
@@ -109,12 +110,30 @@ static u16 nvmet_install_queue(struct nvmet_ctrl *ctrl, struct nvmet_req *req)
 	}
 	if (!sqsize) {
 		pr_warn("queue size zero!\n");
+		req->sq->ctrl = NULL;
 		return NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
 	}
 
 	/* note: convert queue size from 0's-based value to 1's-based value */
 	nvmet_cq_setup(ctrl, req->cq, qid, sqsize + 1);
 	nvmet_sq_setup(ctrl, req->sq, qid, sqsize + 1);
+
+	if (c->cattr & NVME_CONNECT_DISABLE_SQFLOW) {
+		req->sq->sqhd_disabled = true;
+		req->rsp->sq_head = cpu_to_le16(0xffff);
+	}
+
+	if (ctrl->ops->install_queue) {
+		ret = ctrl->ops->install_queue(req->sq);
+		if (ret) {
+			pr_err("failed to install queue %d cntlid %d ret %x\n",
+				qid, ctrl->cntlid, ret);
+			ctrl->sqs[qid] = NULL;
+			req->sq->ctrl = NULL;
+			return ret;
+		}
+	}
+
 	return 0;
 }
 
