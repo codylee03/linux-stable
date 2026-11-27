@@ -1044,8 +1044,8 @@ static int nvme_identify_ns_list(struct nvme_ctrl *dev, unsigned nsid, __le32 *n
 				    NVME_IDENTIFY_DATA_SIZE);
 }
 
-static struct nvme_id_ns *nvme_identify_ns(struct nvme_ctrl *ctrl,
-		unsigned nsid)
+static struct nvme_id_ns *__nvme_identify_ns(struct nvme_ctrl *ctrl,
+		unsigned nsid, int *status)
 {
 	struct nvme_id_ns *id;
 	struct nvme_command c = { };
@@ -1056,18 +1056,28 @@ static struct nvme_id_ns *nvme_identify_ns(struct nvme_ctrl *ctrl,
 	c.identify.nsid = cpu_to_le32(nsid);
 	c.identify.cns = NVME_ID_CNS_NS;
 
+	*status = -ENOMEM;
 	id = kmalloc(sizeof(*id), GFP_KERNEL);
 	if (!id)
 		return NULL;
 
 	error = nvme_submit_sync_cmd(ctrl->admin_q, &c, id, sizeof(*id));
+	*status = error;
 	if (error) {
-		dev_warn(ctrl->device, "Identify namespace failed\n");
+		dev_warn(ctrl->device, "Identify namespace failed (%d)\n", error);
 		kfree(id);
 		return NULL;
 	}
 
 	return id;
+}
+
+static struct nvme_id_ns *nvme_identify_ns(struct nvme_ctrl *ctrl,
+		unsigned nsid)
+{
+	int status;
+
+	return __nvme_identify_ns(ctrl, nsid, &status);
 }
 
 static int nvme_set_features(struct nvme_ctrl *dev, unsigned fid, unsigned dword11,
@@ -1507,9 +1517,11 @@ static void nvme_config_discard(struct nvme_ns *ns)
 		blk_queue_max_write_zeroes_sectors(queue, UINT_MAX);
 }
 
-static void nvme_report_ns_ids(struct nvme_ctrl *ctrl, unsigned int nsid,
+static int nvme_report_ns_ids(struct nvme_ctrl *ctrl, unsigned int nsid,
 		struct nvme_id_ns *id, struct nvme_ns_ids *ids)
 {
+	int ret = 0;
+
 	memset(ids, 0, sizeof(*ids));
 
 	if (ctrl->vs >= NVME_VS(1, 1, 0))
@@ -1520,10 +1532,12 @@ static void nvme_report_ns_ids(struct nvme_ctrl *ctrl, unsigned int nsid,
 		 /* Don't treat error as fatal we potentially
 		  * already have a NGUID or EUI-64
 		  */
-		if (nvme_identify_ns_descs(ctrl, nsid, ids))
+		ret = nvme_identify_ns_descs(ctrl, nsid, ids);
+		if (ret)
 			dev_warn(ctrl->device,
 				 "%s: Identify Descriptors failed\n", __func__);
 	}
+	return ret;
 }
 
 static bool nvme_ns_ids_valid(struct nvme_ns_ids *ids)
@@ -1622,9 +1636,17 @@ static int nvme_revalidate_disk(struct gendisk *disk)
 		return -ENODEV;
 	}
 
-	id = nvme_identify_ns(ctrl, ns->head->ns_id);
-	if (!id)
-		return -ENODEV;
+	id = __nvme_identify_ns(ctrl, ns->head->ns_id, &ret);
+	if (!id) {
+		/*
+		 * Only a status with DNR set means the namespace is really
+		 * gone. Anything else (e.g. a command aborted because the
+		 * controller is resetting) is transient, keep the namespace.
+		 */
+		if (ret > 0 && (ret & NVME_SC_DNR))
+			return -ENODEV;
+		return -EAGAIN;
+	}
 
 	if (id->ncap == 0) {
 		ret = -ENODEV;
@@ -1632,7 +1654,16 @@ static int nvme_revalidate_disk(struct gendisk *disk)
 	}
 
 	__nvme_revalidate_disk(disk, id);
-	nvme_report_ns_ids(ctrl, ns->head->ns_id, id, &ids);
+	ret = nvme_report_ns_ids(ctrl, ns->head->ns_id, id, &ids);
+	if (ret) {
+		/*
+		 * Don't compare partially filled identifiers, and keep the
+		 * namespace: the descriptor list may simply be unsupported or
+		 * the controller may be resetting.
+		 */
+		ret = -EAGAIN;
+		goto out;
+	}
 	if (!nvme_ns_ids_equal(&ns->head->ids, &ids)) {
 		dev_err(ctrl->device,
 			"identifiers changed for nsid %d\n", ns->head->ns_id);
@@ -3289,7 +3320,7 @@ static void nvme_validate_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 
 	ns = nvme_find_get_ns(ctrl, nsid);
 	if (ns) {
-		if (ns->disk && revalidate_disk(ns->disk))
+		if (ns->disk && revalidate_disk(ns->disk) == -ENODEV)
 			nvme_ns_remove(ns);
 		nvme_put_ns(ns);
 	} else
