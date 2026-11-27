@@ -58,6 +58,10 @@ enum {
 	NVMF_OPT_CTRL_LOSS_TMO	= 1 << 11,
 	NVMF_OPT_HOST_ID	= 1 << 12,
 	NVMF_OPT_DUP_CONNECT	= 1 << 13,
+	NVMF_OPT_HDR_DIGEST	= 1 << 14,
+	NVMF_OPT_DATA_DIGEST	= 1 << 15,
+	NVMF_OPT_TOS		= 1 << 16,
+	NVMF_OPT_HOST_IFACE	= 1 << 17,
 };
 
 /**
@@ -101,6 +105,10 @@ struct nvmf_ctrl_options {
 	unsigned int		kato;
 	struct nvmf_host	*host;
 	int			max_reconnects;
+	bool			hdr_digest;
+	bool			data_digest;
+	int			tos;
+	char			*host_iface;
 };
 
 /*
