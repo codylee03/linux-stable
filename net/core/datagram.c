@@ -60,6 +60,8 @@
 #include <net/tcp_states.h>
 #include <trace/events/skb.h>
 #include <net/busy_poll.h>
+#include <crypto/hash.h>
+#include <linux/scatterlist.h>
 
 /*
  *	Is a socket 'connection oriented' ?
@@ -496,6 +498,103 @@ short_copy:
 	return 0;
 }
 EXPORT_SYMBOL(skb_copy_datagram_iter);
+
+/**
+ *	skb_copy_and_hash_datagram_iter - Copy datagram to an iovec iterator
+ *          and update a hash.
+ *	@skb: buffer to copy
+ *	@offset: offset in the buffer to start copying from
+ *	@to: iovec iterator to copy to
+ *	@len: amount of data to copy from buffer to iovec
+ *	@hash: hash request to update
+ */
+int skb_copy_and_hash_datagram_iter(const struct sk_buff *skb, int offset,
+			   struct iov_iter *to, int len,
+			   struct ahash_request *hash)
+{
+#ifdef CONFIG_CRYPTO_HASH
+	int start = skb_headlen(skb);
+	int i, copy = start - offset, start_off = offset, n;
+	struct sk_buff *frag_iter;
+	struct scatterlist sg;
+
+	/* Copy header. */
+	if (copy > 0) {
+		if (copy > len)
+			copy = len;
+		n = copy_to_iter(skb->data + offset, copy, to);
+		if (n) {
+			sg_init_one(&sg, skb->data + offset, n);
+			ahash_request_set_crypt(hash, &sg, NULL, n);
+			crypto_ahash_update(hash);
+		}
+		offset += n;
+		if (n != copy)
+			goto fault;
+		if ((len -= copy) == 0)
+			return 0;
+	}
+
+	/* Copy paged appendix. */
+	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
+		int end;
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+
+		WARN_ON(start > offset + len);
+
+		end = start + skb_frag_size(frag);
+		if ((copy = end - offset) > 0) {
+			if (copy > len)
+				copy = len;
+			n = copy_page_to_iter(skb_frag_page(frag),
+					      frag->page_offset + offset -
+					      start, copy, to);
+			if (n) {
+				sg_init_table(&sg, 1);
+				sg_set_page(&sg, skb_frag_page(frag), n,
+					    frag->page_offset + offset - start);
+				ahash_request_set_crypt(hash, &sg, NULL, n);
+				crypto_ahash_update(hash);
+			}
+			offset += n;
+			if (n != copy)
+				goto fault;
+			if (!(len -= copy))
+				return 0;
+		}
+		start = end;
+	}
+
+	skb_walk_frags(skb, frag_iter) {
+		int end;
+
+		WARN_ON(start > offset + len);
+
+		end = start + frag_iter->len;
+		if ((copy = end - offset) > 0) {
+			if (copy > len)
+				copy = len;
+			if (skb_copy_and_hash_datagram_iter(frag_iter,
+							    offset - start,
+							    to, copy, hash))
+				goto fault;
+			if ((len -= copy) == 0)
+				return 0;
+			offset += copy;
+		}
+		start = end;
+	}
+	if (!len)
+		return 0;
+
+fault:
+	iov_iter_revert(to, offset - start_off);
+	return -EFAULT;
+#else
+	return -EINVAL;
+#endif
+}
+EXPORT_SYMBOL(skb_copy_and_hash_datagram_iter);
 
 /**
  *	skb_copy_datagram_from_iter - Copy a datagram from an iov_iter.
