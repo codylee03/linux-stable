@@ -612,6 +612,11 @@ static inline struct nvme_ns *nvme_get_ns_from_dev(struct device *dev)
 	return dev_to_disk(dev)->private_data;
 }
 
+static inline bool nvme_ctrl_sgl_supported(struct nvme_ctrl *ctrl)
+{
+	return ctrl->sgls & ((1 << 0) | (1 << 1));
+}
+
 int __init nvme_core_init(void);
 void nvme_core_exit(void);
 
