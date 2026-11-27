@@ -1887,11 +1887,13 @@ static unsigned int nvme_tcp_nr_io_queues(struct nvme_ctrl *ctrl)
 {
 	unsigned int nr_io_queues;
 
+	/*
+	 * 4.19 blk-mq has a single queue map, so there are no separate
+	 * write or poll queues.
+	 */
 	nr_io_queues = min(ctrl->opts->nr_io_queues, num_online_cpus());
-	nr_io_queues += min(ctrl->opts->nr_write_queues, num_online_cpus());
-	nr_io_queues += min(ctrl->opts->nr_poll_queues, num_online_cpus());
 
-	return min(nr_io_queues, num_online_cpus());
+	return nr_io_queues;
 }
 
 static int nvme_tcp_alloc_io_queues(struct nvme_ctrl *ctrl)
@@ -2584,8 +2586,7 @@ static struct nvme_tcp_ctrl *nvme_tcp_alloc_ctrl(struct device *dev,
 
 	INIT_LIST_HEAD(&ctrl->list);
 	ctrl->ctrl.opts = opts;
-	ctrl->ctrl.queue_count = opts->nr_io_queues + opts->nr_write_queues +
-				opts->nr_poll_queues + 1;
+	ctrl->ctrl.queue_count = opts->nr_io_queues + 1;
 	ctrl->ctrl.sqsize = opts->queue_size - 1;
 	ctrl->ctrl.kato = opts->kato;
 
@@ -2705,7 +2706,6 @@ static struct nvmf_transport_ops nvme_tcp_transport = {
 	.allowed_opts	= NVMF_OPT_TRSVCID | NVMF_OPT_RECONNECT_DELAY |
 			  NVMF_OPT_HOST_TRADDR | NVMF_OPT_CTRL_LOSS_TMO |
 			  NVMF_OPT_HDR_DIGEST | NVMF_OPT_DATA_DIGEST |
-			  NVMF_OPT_NR_WRITE_QUEUES | NVMF_OPT_NR_POLL_QUEUES |
 			  NVMF_OPT_TOS | NVMF_OPT_HOST_IFACE,
 	.create_ctrl	= nvme_tcp_create_ctrl,
 };
