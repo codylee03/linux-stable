@@ -115,6 +115,11 @@ static u16 nvmet_install_queue(struct nvmet_ctrl *ctrl, struct nvmet_req *req)
 		return NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
 	}
 
+	if (ctrl->sqs[qid] != NULL) {
+		pr_warn("qid %u has already been created\n", qid);
+		return NVME_SC_CMD_SEQ_ERROR | NVME_SC_DNR;
+	}
+
 	old = cmpxchg(&req->sq->ctrl, NULL, ctrl);
 	if (old) {
 		pr_warn("queue already connected!\n");
@@ -136,6 +141,7 @@ static u16 nvmet_install_queue(struct nvmet_ctrl *ctrl, struct nvmet_req *req)
 			pr_err("failed to install queue %d cntlid %d ret %x\n",
 				qid, ctrl->cntlid, ret);
 			ctrl->sqs[qid] = NULL;
+			ctrl->cqs[qid] = NULL;
 			req->sq->ctrl = NULL;
 			return ret;
 		}
