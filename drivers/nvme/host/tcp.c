@@ -272,6 +272,25 @@ static void nvme_tcp_sync_io_queues(struct nvme_ctrl *ctrl)
 	up_read(&ctrl->namespaces_rwsem);
 }
 
+/*
+ * 4.19 nvme_wait_freeze_timeout() returns void. This is the same loop,
+ * but like 5.15.y it returns the remaining timeout, so 0 means that the
+ * wait timed out.
+ */
+static int nvme_tcp_wait_freeze_timeout(struct nvme_ctrl *ctrl, long timeout)
+{
+	struct nvme_ns *ns;
+
+	down_read(&ctrl->namespaces_rwsem);
+	list_for_each_entry(ns, &ctrl->namespaces, list) {
+		timeout = blk_mq_freeze_queue_wait_timeout(ns->queue, timeout);
+		if (timeout <= 0)
+			break;
+	}
+	up_read(&ctrl->namespaces_rwsem);
+	return timeout;
+}
+
 static inline bool nvme_tcp_sgl_supported(struct nvme_ctrl *ctrl)
 {
 	return ctrl->sgls & ((1 << 0) | (1 << 1));
@@ -2138,7 +2157,16 @@ static int nvme_tcp_configure_io_queues(struct nvme_ctrl *ctrl, bool new)
 	if (!new) {
 		nvme_start_freeze(ctrl);
 		nvme_start_queues(ctrl);
-		nvme_wait_freeze_timeout(ctrl, NVME_IO_TIMEOUT);
+		if (!nvme_tcp_wait_freeze_timeout(ctrl, NVME_IO_TIMEOUT)) {
+			/*
+			 * If we timed out waiting for freeze we are likely to
+			 * be stuck.  Fail the controller initialization just
+			 * to be safe.
+			 */
+			ret = -ENODEV;
+			nvme_unfreeze(ctrl);
+			goto out_wait_freeze_timed_out;
+		}
 		blk_mq_update_nr_hw_queues(ctrl->tagset,
 			ctrl->queue_count - 1);
 		nvme_unfreeze(ctrl);
@@ -2146,6 +2174,10 @@ static int nvme_tcp_configure_io_queues(struct nvme_ctrl *ctrl, bool new)
 
 	return 0;
 
+out_wait_freeze_timed_out:
+	nvme_stop_queues(ctrl);
+	nvme_tcp_sync_io_queues(ctrl);
+	nvme_tcp_stop_io_queues(ctrl);
 out_cleanup_connect_q:
 	nvme_tcp_cancel_tagset(ctrl);
 	if (new)
