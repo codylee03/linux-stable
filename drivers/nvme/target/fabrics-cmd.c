@@ -110,6 +110,7 @@ static u16 nvmet_install_queue(struct nvmet_ctrl *ctrl, struct nvmet_req *req)
 	}
 	if (!sqsize) {
 		pr_warn("queue size zero!\n");
+		req->sq->ctrl = NULL;
 		return NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
 	}
 
