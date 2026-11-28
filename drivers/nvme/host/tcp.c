@@ -2468,6 +2468,17 @@ static void nvme_tcp_stop_ctrl(struct nvme_ctrl *ctrl)
 {
 	cancel_work_sync(&to_tcp_ctrl(ctrl)->err_work);
 	cancel_delayed_work_sync(&to_tcp_ctrl(ctrl)->connect_work);
+
+	/*
+	 * Error recovery can be interrupted by controller removal, which
+	 * leaves the I/O queues quiesced with requeued I/O on them.
+	 * nvme_delete_ctrl_work() calls nvme_remove_namespaces() right after
+	 * ->stop_ctrl(), and blk_cleanup_queue() would wait for that I/O
+	 * forever. Unquiesce the queues so that pending I/O, especially
+	 * I/O submitted from scan work, can be dispatched and failed.
+	 */
+	if (ctrl->state == NVME_CTRL_DELETING)
+		nvme_start_queues(ctrl);
 }
 
 static void nvme_tcp_free_ctrl(struct nvme_ctrl *nctrl)
