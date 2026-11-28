@@ -58,6 +58,10 @@ enum {
 	NVMF_OPT_CTRL_LOSS_TMO	= 1 << 11,
 	NVMF_OPT_HOST_ID	= 1 << 12,
 	NVMF_OPT_DUP_CONNECT	= 1 << 13,
+	NVMF_OPT_HDR_DIGEST	= 1 << 15,
+	NVMF_OPT_DATA_DIGEST	= 1 << 16,
+	NVMF_OPT_TOS		= 1 << 19,
+	NVMF_OPT_HOST_IFACE	= 1 << 21,
 };
 
 /**
@@ -76,6 +80,8 @@ enum {
  *              subsystem which is adding a controller.
  * @host_traddr: A transport-specific field identifying the NVME host port
  *              to use for the connection to the controller.
+ * @host_iface: A transport-specific field identifying the NVME host
+ *              interface to use for the connection to the controller.
  * @queue_size: Number of IO queue elements.
  * @nr_io_queues: Number of controller IO queues that will be established.
  * @reconnect_delay: Time between two consecutive reconnect attempts.
@@ -85,6 +91,9 @@ enum {
  * @max_reconnects: maximum number of allowed reconnect attempts before removing
  *              the controller, (-1) means reconnect forever, zero means remove
  *              immediately;
+ * @hdr_digest: generate/verify header digest (TCP)
+ * @data_digest: generate/verify data digest (TCP)
+ * @tos: type of service
  */
 struct nvmf_ctrl_options {
 	unsigned		mask;
@@ -93,6 +102,7 @@ struct nvmf_ctrl_options {
 	char			*traddr;
 	char			*trsvcid;
 	char			*host_traddr;
+	char			*host_iface;
 	size_t			queue_size;
 	unsigned int		nr_io_queues;
 	unsigned int		reconnect_delay;
@@ -101,6 +111,9 @@ struct nvmf_ctrl_options {
 	unsigned int		kato;
 	struct nvmf_host	*host;
 	int			max_reconnects;
+	bool			hdr_digest;
+	bool			data_digest;
+	int			tos;
 };
 
 /*
