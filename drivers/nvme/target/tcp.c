@@ -1938,6 +1938,20 @@ static u16 nvmet_tcp_install_queue(struct nvmet_sq *sq)
 {
 	struct nvmet_tcp_queue *queue =
 		container_of(sq, struct nvmet_tcp_queue, nvme_sq);
+	/* back to the 0's based value; a size of 0 means 65535 overflowed */
+	u16 sqsize = sq->size - 1;
+	u16 mqes = NVME_CAP_MQES(sq->ctrl->cap);
+
+	/*
+	 * 4.19 nvmet_install_queue() does not check the host's sqsize
+	 * against MQES, so check it here before allocating sq->size * 2
+	 * commands for the queue.
+	 */
+	if (sqsize > mqes) {
+		pr_warn("sqsize %u is larger than MQES supported %u cntlid %d\n",
+			sqsize, mqes, sq->ctrl->cntlid);
+		return NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
+	}
 
 	if (sq->qid == 0) {
 		/* Let inflight controller teardown complete */
